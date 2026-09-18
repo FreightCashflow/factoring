@@ -9,6 +9,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- CAPTCHA: Cloudflare Turnstile -->
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad" async defer></script>
+
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -244,6 +248,45 @@
             font-weight: 500;
         }
 
+        /* ===== CAPTCHA STYLES ===== */
+        .captcha-group {
+            margin-bottom: 25px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .captcha-label {
+            text-align: center;
+            font-size: 0.95em;
+            color: #64748b;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .captcha-error {
+            display: none;
+            background: #fef2f2;
+            border-left: 4px solid #ef4444;
+            color: #991b1b;
+            padding: 14px 18px;
+            border-radius: 8px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        /* Honeypot — hidden from humans, visible to naive bots */
+        .hp-field {
+            position: absolute;
+            left: -9999px;
+            top: -9999px;
+            width: 1px;
+            height: 1px;
+            opacity: 0;
+            pointer-events: none;
+        }
+
         .submit-btn {
             background: linear-gradient(135deg, #ff6b35 0%, #f59e0b 100%);
             color: white;
@@ -261,9 +304,16 @@
             letter-spacing: 2px;
         }
 
-        .submit-btn:hover {
+        .submit-btn:hover:not(:disabled) {
             transform: translateY(-3px);
             box-shadow: 0 15px 35px rgba(255, 107, 53, 0.5);
+        }
+
+        .submit-btn:disabled {
+            background: #cbd5e0;
+            box-shadow: none;
+            cursor: not-allowed;
+            transform: none;
         }
 
         .footer {
@@ -307,15 +357,15 @@
                 <div class="free-badge">100% FREE SERVICE</div>
                 <h1>Better Factoring Rates Start Here</h1>
                 <p class="subtitle">
-                    We leverage collective carrier volume to secure lower factoring rates.</strong> 
+                    We leverage collective carrier volume to secure lower factoring rates.
                     Factoring companies compete for your business, and you get the savings—at zero cost.
                 </p>
             </div>
         </header>
 
         <section class="value-props">
-            <h2>Don’t Go to the Factoring Table Alone</h2>
-            <p class="value-subtitle">A smarter way to get better rates—here’s how it works</p>
+            <h2>Don't Go to the Factoring Table Alone</h2>
+            <p class="value-subtitle">A smarter way to get better rates—here's how it works</p>
 
             <div class="benefits-grid">
                 <div class="benefit-item"><div class="benefit-icon">$</div><div class="benefit-text">Request a quote</div></div>
@@ -329,7 +379,7 @@
 
             <div class="form-intro">
                 <strong>Get Your FREE Factoring Quote</strong>
-                Submit your information below and we'll connect you with top factoring companies offering discounted rates. 
+                Submit your information below and we'll connect you with top factoring companies offering discounted rates.
                 No obligations, no hidden fees—just better factoring deals for your freight business.
             </div>
 
@@ -337,12 +387,14 @@
                 ✅ Thank you! Your quote request has been submitted. We'll contact you within 24 hours with competitive factoring options.
             </div>
 
-            <!-- ⭐ FIXED FORM ⭐ -->
+            <div class="captcha-error" id="captchaError">
+                Please complete the verification below before submitting.
+            </div>
+
             <form id="factoringForm"
                   action="https://docs.google.com/forms/d/e/1FAIpQLScIlXVAVg8JtX4Uqgmdf1JPRSWEm6DPZ4EwPFEkzDsKPAqONQ/formResponse"
                   method="POST"
-                  target="hidden_iframe"
-                  onsubmit="submitted = true;">
+                  target="hidden_iframe">
 
                 <div class="form-group">
                     <label for="contactName">Contact Name <span class="required">*</span></label>
@@ -374,7 +426,25 @@
                     <textarea id="tellUsMore" name="entry.1791543838" required placeholder="Please share details about your operation..."></textarea>
                 </div>
 
-                <button type="submit" class="submit-btn">Get Free Quote Now</button>
+                <!-- HONEYPOT: humans never see or fill this; bots usually do -->
+                <div class="hp-field" aria-hidden="true">
+                    <label for="website_url">Leave this field empty</label>
+                    <input type="text" id="website_url" name="website_url" tabindex="-1" autocomplete="off">
+                </div>
+
+                <!-- ===== CAPTCHA ===== -->
+                <div class="captcha-group">
+                    <div class="captcha-label">Quick check — confirm you're not a robot</div>
+                    <div class="cf-turnstile"
+                         id="turnstileWidget"
+                         data-sitekey="0x4AAAAAAE8Ht-fKmgLVD-dw"
+                         data-callback="onCaptchaSuccess"
+                         data-expired-callback="onCaptchaExpired"
+                         data-error-callback="onCaptchaExpired"
+                         data-theme="light"></div>
+                </div>
+
+                <button type="submit" class="submit-btn" id="submitBtn" disabled>Get Free Quote Now</button>
             </form>
 
             <iframe name="hidden_iframe" id="hidden_iframe" style="display:none;"></iframe>
@@ -390,34 +460,97 @@
         </footer>
     </div>
 
-    <!-- ⭐ FIXED MOBILE-SAFE SUBMISSION SCRIPT ⭐ -->
-  <script>
-let submitted = false;
+    <script>
+    (function () {
+        var submitted = false;
+        var captchaPassed = false;
+        var pageLoadedAt = Date.now();
 
-document.getElementById('hidden_iframe').onload = function () {
-    if (submitted) {
-        // Show success message
-        const msg = document.getElementById('successMessage');
-        msg.style.display = 'block';
+        var form = document.getElementById('factoringForm');
+        var submitBtn = document.getElementById('submitBtn');
+        var captchaError = document.getElementById('captchaError');
+        var successMsg = document.getElementById('successMessage');
+        var honeypot = document.getElementById('website_url');
 
-        // Scroll to top so the user sees the confirmation
-        window.scrollTo({
-            top: 0,
-            behavior: 'smooth'
+        // Turnstile fires this when the visitor passes
+        window.onCaptchaSuccess = function () {
+            captchaPassed = true;
+            submitBtn.disabled = false;
+            captchaError.style.display = 'none';
+        };
+
+        // Token expires after ~5 min, or the widget errored
+        window.onCaptchaExpired = function () {
+            captchaPassed = false;
+            submitBtn.disabled = true;
+        };
+
+        // Fallback: if Turnstile never loads (ad blocker, network),
+        // don't trap a real customer behind a dead widget.
+        window.onTurnstileLoad = function () { /* widget renders automatically */ };
+        setTimeout(function () {
+            if (!window.turnstile) {
+                captchaPassed = true;
+                submitBtn.disabled = false;
+                document.getElementById('turnstileWidget').style.display = 'none';
+                document.querySelector('.captcha-label').style.display = 'none';
+            }
+        }, 6000);
+
+        form.addEventListener('submit', function (e) {
+            // 1. Honeypot tripped — silently drop
+            if (honeypot.value !== '') {
+                e.preventDefault();
+                return;
+            }
+
+            // 2. Submitted suspiciously fast (under 4 seconds)
+            if (Date.now() - pageLoadedAt < 4000) {
+                e.preventDefault();
+                captchaError.textContent = 'Please take a moment to review your information before submitting.';
+                captchaError.style.display = 'block';
+                return;
+            }
+
+            // 3. Captcha not completed
+            if (!captchaPassed) {
+                e.preventDefault();
+                captchaError.textContent = 'Please complete the verification below before submitting.';
+                captchaError.style.display = 'block';
+                document.querySelector('.captcha-group').scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+
+            submitted = true;
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Submitting...';
         });
 
-        // Reset the form
-        document.getElementById('factoringForm').reset();
-        submitted = false;
+        document.getElementById('hidden_iframe').onload = function () {
+            if (!submitted) return;
 
-        // Hide confirmation after 6 seconds
-        setTimeout(() => {
-            msg.style.display = 'none';
-        }, 6000);
-    }
-};
-</script>
+            successMsg.style.display = 'block';
+            captchaError.style.display = 'none';
+            window.scrollTo({ top: 0, behavior: 'smooth' });
 
+            form.reset();
+            submitted = false;
+
+            // Reset captcha so the next submission needs a fresh token
+            if (window.turnstile) {
+                window.turnstile.reset();
+                captchaPassed = false;
+                submitBtn.disabled = true;
+            }
+            submitBtn.textContent = 'Get Free Quote Now';
+            pageLoadedAt = Date.now();
+
+            setTimeout(function () {
+                successMsg.style.display = 'none';
+            }, 6000);
+        };
+    })();
+    </script>
 
 </body>
 </html>
